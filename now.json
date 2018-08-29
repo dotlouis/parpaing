@@ -1,0 +1,7 @@
+{
+  "alias": "parpaing",
+  "type": "docker",
+  "features": {
+    "cloud": "v2"
+  }
+}
