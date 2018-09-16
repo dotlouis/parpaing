@@ -7,8 +7,11 @@
     {
       "type": "node",
       "request": "launch",
+      "envFile": "${workspaceFolder}/.env",
+      "runtimeArgs": ["--experimental-modules", "--harmony-dynamic-import"],
+      "runtimeVersion": "default",
       "name": "Launch Program",
-      "program": "${workspaceFolder}/index.js"
+      "program": "${workspaceFolder}/index.mjs"
     }
   ]
 }
