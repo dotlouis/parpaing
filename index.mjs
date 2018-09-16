@@ -4,9 +4,10 @@ import micro from 'micro';
 import parse from 'urlencoded-body-parser';
 import serviceAccount from './parpaing-e3e5c-firebase-adminsdk-sxqzn-23c4cf2924.json';
 import microrouter from 'microrouter';
+import crypto from 'crypto';
 
 const { router, post, get } = microrouter;
-const { send } = micro;
+const { send, json, text } = micro;
 const { WebClient } = SlackClient;
 const slack = new WebClient(process.env.SLACK_TOKEN);
 
@@ -20,93 +21,193 @@ store.settings({
   timestampsInSnapshots: true,
 });
 
-// get slack users and insert them into firestore if they don't already exist
-const initUserStore = async () => {
-  (await slack.users.list()).members.forEach(async user => {
-    const userRef = store.collection('users').doc(user.id);
-    if (!(await userRef.get()).exists) {
-      console.info(`[ADDED] ${user.id} : ${user.name}`);
-      userRef.set({ ...user, score: 1 });
-    }
-  });
-};
+// initUserStore();
+// distribute();
 
-const getUser = userId =>
-  store
+// https://api.slack.com/docs/verifying-requests-from-slack
+function verifyRequest(req, rawBody) {
+  const version = 'v0';
+  const timestamp = req.headers['x-slack-request-timestamp'];
+  const signature = req.headers['x-slack-signature'];
+  const sigBaseString = `${version}:${timestamp}:${rawBody}`;
+  const hmac = crypto.createHmac('sha256', process.env.SLACK_SIGNIN_SECRET);
+  hmac.update(sigBaseString);
+  const computedSignature = `v0=${hmac.digest('hex')}`;
+
+  return computedSignature === signature;
+}
+
+// get slack users and insert them into firestore if they don't already exist
+async function initUserStore() {
+  console.log('Initiliazing user base...');
+  (await slack.users.list()).members
+    .filter(user => !user.deleted && !user.is_bot)
+    .forEach(async user => {
+      const userRef = store.collection('users').doc(user.id);
+      if (!(await userRef.get()).exists) {
+        console.info(`[ADDED] ${user.id} : ${user.name}`);
+        userRef.set({ ...user, score: 1, availablePoints: 0 });
+      }
+    });
+  console.log('Done initializing');
+}
+
+// adds an amount of points available periodically
+function distribute() {
+  const count = 6;
+  const period = 10000;
+  const slackbotChannelId = 'D1SJA0UHX';
+  setInterval(async () => {
+    (await slack.users.list()).members.forEach(async slackUser => {
+      const userRef = store.collection('users').doc(slackUser.id);
+      const user = await userRef.get();
+      if (user.exists) {
+        console.info(
+          `[GAME] ${user.data().id}:${
+            user.data().name
+          } received ${count} parpaing`,
+        );
+        userRef.set(
+          { availablePoints: (user.availablePoints || 0) + count },
+          { merge: true },
+        );
+        slack.chat.postMessage({
+          channel: slackbotChannelId,
+          text: `You've received ${count} parpaing`,
+        });
+      }
+    });
+  }, period);
+}
+
+function getUser(userId) {
+  return store
     .collection('users')
     .doc(userId)
     .get();
+}
 
-const updateUserScore = async (userId, operation) => {
+async function updateUserScore(userId, operation) {
   const user = (await getUser(userId)).data();
   store
     .collection('users')
     .doc(userId)
-    .set({ score: user.score + operation }, { merge: true });
-};
+    .set({ score: (user.score || 0) + operation }, { merge: true });
+}
 
-const addToUserScore = (userId, amount) => updateUserScore(userId, amount);
-const subtractToUserScore = (userId, amount) =>
-  updateUserScore(userId, -amount);
-
-(async function() {
-  initUserStore();
-})();
+async function updateUserAvailablePoints(userId, operation) {
+  const user = (await getUser(userId)).data();
+  store
+    .collection('users')
+    .doc(userId)
+    .set(
+      { availablePoints: (user.availablePoints || 0) + operation },
+      { merge: true },
+    );
+}
 
 const throwRoute = post('/throw', async (req, res) => {
   const data = await parse(req);
   console.log(data);
+  let fromName = data.user_name;
+  let fromId = data.user_id;
 
-  let reg = data.text.match(/<@([A-Z0-9]*)\|([a-zA-Z0-9]*)>/);
+  let reg = data.text.match(
+    /<@([A-Z0-9]*)\|([a-zA-Z0-9]*)>\s?([0-9]*)?\s?(.*)?/,
+  );
   if (!reg) {
-    slack.chat.postMessage({
-      channel: data.channel_id,
-      text: `invalid request, no valid username could be found`,
-    });
-    return send(res, 200);
+    // same as slack.chat.postEphemeral();
+    return send(
+      res,
+      200,
+      `invalid request, have you provided a user to throw parpaing at ?`,
+    );
   }
   let toId = reg[1];
   let toName = reg[2];
-  let fromName = data.user_name;
-  let fromId = data.user_id;
-  console.log(reg);
-
-  if (!toId) {
-    return `Who you're throwing a parpaing at?`;
+  let throwCount;
+  if (!reg[3]) {
+    throwCount = 1; // default amount sent if none is provided
+  } else if (parseInt(reg[3]) < 0) {
+    return send(
+      res,
+      200,
+      `You can't send a negative parpaing you cheater ! ;)`,
+    );
+  } else {
+    throwCount = parseInt(reg[3]);
   }
-  if (!fromId) {
-    return `Who send this?`;
-  }
+  let throwMessage = reg[4];
 
   const [fromUser, toUser] = await Promise.all([
     getUser(fromId),
     getUser(toId),
   ]);
   if (!fromUser.exists) {
-    slack.chat.postMessage({
-      channel: data.channel_id,
-      text: `user ${fromName} does not exists`,
-    });
-    return send(res, 200);
+    return send(res, 200, `user ${fromName} does not exists`);
   } else if (!toUser.exists) {
-    slack.chat.postMessage({
-      channel: data.channel_id,
-      text: `user ${toName} does not exists`,
-    });
-    return send(res, 200);
+    return send(res, 200, `user ${toName} does not exists`);
   }
 
-  slack.chat
-    .postMessage({
-      channel: toId,
-      text: `${fromName} is throwing a parpaing at you`,
-    })
-    .then(answer => console.log(answer));
+  if (fromUser.data().availablePoints - throwCount < 0) {
+    console.log(
+      `${fromName} don't have enough points (${
+        fromUser.data().availablePoints
+      }pts)`,
+    );
+    return send(
+      res,
+      200,
+      `You don't have enough points (${fromUser.data().availablePoints}pts)`,
+    );
+  }
 
-  updateUserScore(fromId, -1);
-  updateUserScore(toId, 1);
+  slack.chat.postMessage({
+    channel: toId,
+    text: `@${fromName} is throwing ${throwCount} parpaing${
+      throwCount > 1 ? 's' : ''
+    } at you`,
+    attachments: [
+      {
+        text: throwMessage || '',
+        callback_id: 'reaction',
+        actions: [
+          {
+            name: 'reaction',
+            text: ':thumbsup:',
+            type: 'button',
+            value: ':thumbsup:',
+          },
+          {
+            name: 'reaction',
+            text: ':joy:',
+            type: 'button',
+            value: ':joy:',
+          },
+          {
+            name: 'reaction',
+            text: ':heart:',
+            type: 'button',
+            value: ':heart:',
+          },
+        ],
+      },
+    ],
+  });
 
-  send(res, 200, `You throwed a parpaing at ${toName}`);
+  updateUserAvailablePoints(fromId, -throwCount);
+  updateUserScore(toId, throwCount);
+
+  send(res, 200, {
+    text: `You throwed ${throwCount} parpaing${
+      throwCount > 1 ? 's' : ''
+    } at @${toName}`,
+    attachments: [
+      {
+        text: throwMessage,
+      },
+    ],
+  });
 });
 
 const checkRoute = post('/check', async (req, res) => {
@@ -119,12 +220,58 @@ const checkRoute = post('/check', async (req, res) => {
   send(res, 200, `You have ${user.data().score} parpaings`);
 });
 
+const eventRoute = post('/event', async (req, res) => {
+  console.log(req);
+  if (req.headers['content-type'] === 'application/json') {
+    const data = await json(req);
+    console.log(data);
+    return send(res, 200, data.challenge);
+  }
+  send(res, 200);
+});
+
+const reactRoute = post('/react', async (req, res) => {
+  // TODO: cannot read the reuest body multiple times. How to verify ?
+  // const rawBody = await text(req);
+  // verify the request comes from slack
+  // const verified = await verifyRequest(req, rawBody);
+  // // reply nothing if not
+  // if (!verified) {
+  //   return;
+  // }
+  const data = await parse(req);
+  const body = JSON.parse(data.payload);
+  const reaction = body.actions[0].value;
+
+  slack.chat.postMessage({
+    channel: body.channel.id,
+    text: `@${body.user.name} reacted with ${reaction}`,
+    attachments: [
+      {
+        author_name: `${body.original_message.text}`,
+        text: body.original_message.attachments[0].text,
+      },
+    ],
+  });
+
+  send(res, 200, {
+    text: `You reacted with ${reaction}`,
+    replace_original: true,
+  });
+});
+
 const homeRoute = get('/', async (req, res) => {
   console.log(req);
   send(res, 200, 'OK');
 });
 
-const routes = router(throwRoute, checkRoute, homeRoute);
+const routes = router(
+  throwRoute,
+  checkRoute,
+  eventRoute,
+  reactRoute,
+  homeRoute,
+);
 const server = micro(routes);
 
 server.listen(3000);
