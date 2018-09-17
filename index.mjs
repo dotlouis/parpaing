@@ -5,6 +5,7 @@ import parse from 'urlencoded-body-parser';
 import serviceAccount from './parpaing-e3e5c-firebase-adminsdk-sxqzn-23c4cf2924.json';
 import microrouter from 'microrouter';
 import crypto from 'crypto';
+import schedule from 'node-schedule';
 
 const { router, post, get } = microrouter;
 const { send, json, text } = micro;
@@ -22,7 +23,7 @@ store.settings({
 });
 
 // initUserStore();
-// distribute();
+distribute();
 
 // https://api.slack.com/docs/verifying-requests-from-slack
 function verifyRequest(req, rawBody) {
@@ -55,9 +56,8 @@ async function initUserStore() {
 // adds an amount of points available periodically
 function distribute() {
   const count = 6;
-  const period = 10000;
   const slackbotChannelId = 'D1SJA0UHX';
-  setInterval(async () => {
+  schedule.scheduleJob({ hour: 9, minutes: 30 }, async () => {
     (await slack.users.list()).members.forEach(async slackUser => {
       const userRef = store.collection('users').doc(slackUser.id);
       const user = await userRef.get();
@@ -65,7 +65,7 @@ function distribute() {
         console.info(
           `[GAME] ${user.data().id}:${
             user.data().name
-          } received ${count} parpaing`,
+          } received ${count} lovebrick`,
         );
         userRef.set(
           { availablePoints: (user.availablePoints || 0) + count },
@@ -73,11 +73,11 @@ function distribute() {
         );
         slack.chat.postMessage({
           channel: slackbotChannelId,
-          text: `You've received ${count} parpaing`,
+          text: `You've received ${count} lovebrick. Use them without moderation :heart:`,
         });
       }
     });
-  }, period);
+  });
 }
 
 function getUser(userId) {
@@ -106,7 +106,7 @@ async function updateUserAvailablePoints(userId, operation) {
     );
 }
 
-const throwRoute = post('/throw', async (req, res) => {
+const giveRoute = post('/give', async (req, res) => {
   const data = await parse(req);
   console.log(data);
   let fromName = data.user_name;
@@ -120,24 +120,20 @@ const throwRoute = post('/throw', async (req, res) => {
     return send(
       res,
       200,
-      `invalid request, have you provided a user to throw parpaing at ?`,
+      `invalid request, have you specified a user to give to ?`,
     );
   }
   let toId = reg[1];
   let toName = reg[2];
-  let throwCount;
+  let giveCount;
   if (!reg[3]) {
-    throwCount = 1; // default amount sent if none is provided
+    giveCount = 1; // default amount sent if none is provided
   } else if (parseInt(reg[3]) < 0) {
-    return send(
-      res,
-      200,
-      `You can't send a negative parpaing you cheater ! ;)`,
-    );
+    return send(res, 200, `You can't send a negative lovebrick you thief ! ;)`);
   } else {
-    throwCount = parseInt(reg[3]);
+    giveCount = parseInt(reg[3]);
   }
-  let throwMessage = reg[4];
+  let giveMessage = reg[4];
 
   const [fromUser, toUser] = await Promise.all([
     getUser(fromId),
@@ -149,7 +145,7 @@ const throwRoute = post('/throw', async (req, res) => {
     return send(res, 200, `user ${toName} does not exists`);
   }
 
-  if (fromUser.data().availablePoints - throwCount < 0) {
+  if (fromUser.data().availablePoints - giveCount < 0) {
     console.log(
       `${fromName} don't have enough points (${
         fromUser.data().availablePoints
@@ -164,12 +160,12 @@ const throwRoute = post('/throw', async (req, res) => {
 
   slack.chat.postMessage({
     channel: toId,
-    text: `@${fromName} is throwing ${throwCount} parpaing${
-      throwCount > 1 ? 's' : ''
-    } at you`,
+    text: `@${fromName} gave you ${giveCount} lovebrick${
+      giveCount > 1 ? 's' : ''
+    }`,
     attachments: [
       {
-        text: throwMessage || '',
+        text: giveMessage || '',
         callback_id: 'reaction',
         actions: [
           {
@@ -195,29 +191,29 @@ const throwRoute = post('/throw', async (req, res) => {
     ],
   });
 
-  updateUserAvailablePoints(fromId, -throwCount);
-  updateUserScore(toId, throwCount);
+  updateUserAvailablePoints(fromId, -giveCount);
+  updateUserScore(toId, giveCount);
 
   send(res, 200, {
-    text: `You throwed ${throwCount} parpaing${
-      throwCount > 1 ? 's' : ''
-    } at @${toName}`,
+    text: `You gave ${giveCount} lovebrick${
+      giveCount > 1 ? 's' : ''
+    } to @${toName}`,
     attachments: [
       {
-        text: throwMessage,
+        text: giveMessage,
       },
     ],
   });
 });
 
-const checkRoute = post('/check', async (req, res) => {
+const countRoute = post('/lovebrick', async (req, res) => {
   const data = await parse(req);
   console.log(data);
   let fromName = data.user_name;
   let fromId = data.user_id;
   let user = await getUser(fromId);
 
-  send(res, 200, `You have ${user.data().score} parpaings`);
+  send(res, 200, `You have ${user.data().score} lovebricks`);
 });
 
 const eventRoute = post('/event', async (req, res) => {
@@ -265,13 +261,7 @@ const homeRoute = get('/', async (req, res) => {
   send(res, 200, 'OK');
 });
 
-const routes = router(
-  throwRoute,
-  checkRoute,
-  eventRoute,
-  reactRoute,
-  homeRoute,
-);
+const routes = router(giveRoute, countRoute, eventRoute, reactRoute, homeRoute);
 const server = micro(routes);
 
 server.listen(3000);
