@@ -108,7 +108,6 @@ async function updateUserAvailablePoints(userId, operation) {
 
 const giveRoute = post('/give', async (req, res) => {
   const data = await parse(req);
-  console.log(data);
   let fromName = data.user_name;
   let fromId = data.user_id;
 
@@ -146,11 +145,6 @@ const giveRoute = post('/give', async (req, res) => {
   }
 
   if (fromUser.data().availablePoints - giveCount < 0) {
-    console.log(
-      `${fromName} don't have enough points (${
-        fromUser.data().availablePoints
-      }pts)`,
-    );
     return send(
       res,
       200,
@@ -208,23 +202,21 @@ const giveRoute = post('/give', async (req, res) => {
 
 const countRoute = post('/lovebrick', async (req, res) => {
   const data = await parse(req);
-  console.log(data);
-  let fromName = data.user_name;
   let fromId = data.user_id;
   let user = await getUser(fromId);
 
   send(res, 200, `You have ${user.data().score} lovebricks`);
 });
 
-const eventRoute = post('/event', async (req, res) => {
-  console.log(req);
-  if (req.headers['content-type'] === 'application/json') {
-    const data = await json(req);
-    console.log(data);
-    return send(res, 200, data.challenge);
-  }
-  send(res, 200);
-});
+// const eventRoute = post('/event', async (req, res) => {
+//   console.log(req);
+//   if (req.headers['content-type'] === 'application/json') {
+//     const data = await json(req);
+//     console.log(data);
+//     return send(res, 200, data.challenge);
+//   }
+//   send(res, 200);
+// });
 
 const reactRoute = post('/react', async (req, res) => {
   // TODO: cannot read the reuest body multiple times. How to verify ?
@@ -257,11 +249,10 @@ const reactRoute = post('/react', async (req, res) => {
 });
 
 const homeRoute = get('/', async (req, res) => {
-  console.log(req);
   send(res, 200, 'OK');
 });
 
-const routes = router(giveRoute, countRoute, eventRoute, reactRoute, homeRoute);
+const routes = router(giveRoute, countRoute, reactRoute, homeRoute);
 const server = micro(routes);
 
 server.listen(3000);
