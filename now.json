@@ -1,6 +1,7 @@
 {
   "alias": "lovebrick",
   "type": "docker",
+  "dotenv": true,
   "features": {
     "cloud": "v2"
   }

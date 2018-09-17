@@ -11,6 +11,8 @@ const { send, json, text } = micro;
 const { WebClient } = SlackClient;
 const slack = new WebClient(process.env.SLACK_TOKEN);
 
+console.log(process.env.FIREBASE_PROJECT_ID);
+
 firebase.initializeApp({
   credential: firebase.credential.cert({
     type: `service_account`,
