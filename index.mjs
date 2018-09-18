@@ -11,8 +11,6 @@ const { send, json, text } = micro;
 const { WebClient } = SlackClient;
 const slack = new WebClient(process.env.SLACK_TOKEN);
 
-console.log(process.env.FIREBASE_PROJECT_ID);
-
 firebase.initializeApp({
   credential: firebase.credential.cert({
     type: `service_account`,
@@ -56,11 +54,11 @@ function verifyRequest(req, rawBody) {
 async function initUserStore() {
   console.log('Initiliazing user base...');
   (await slack.users.list()).members
-    .filter(user => !user.deleted && !user.is_bot)
+    .filter(user => !user.deleted && !user.is_bot && !user.is_restricted)
     .forEach(async user => {
       const userRef = store.collection('users').doc(user.id);
       if (!(await userRef.get()).exists) {
-        console.info(`[ADDED] ${user.id} : ${user.name}`);
+        console.info(`[USER ADDED] ${user.id} : ${user.name}`);
         userRef.set({ ...user, score: 1, availablePoints: 0 });
       }
     });
@@ -70,7 +68,6 @@ async function initUserStore() {
 // adds an amount of points available periodically
 function distribute() {
   const count = 6;
-  const slackbotChannelId = 'D1SJA0UHX';
   schedule.scheduleJob({ hour: 9, minutes: 30 }, async () => {
     (await slack.users.list()).members.forEach(async slackUser => {
       const userRef = store.collection('users').doc(slackUser.id);
@@ -81,12 +78,12 @@ function distribute() {
             user.data().name
           } received ${count} lovebrick`,
         );
-        userRef.set(
-          { availablePoints: (user.availablePoints || 0) + count },
-          { merge: true },
-        );
+        userRef.set({ availablePoints: count }, { merge: true });
+
+        console.log(`[DISTRIBUTE] ${slackUser.name} received ${count}`);
+
         slack.chat.postMessage({
-          channel: slackbotChannelId,
+          channel: slackUser.id,
           text: `You've received ${count} lovebrick. Use them without moderation :heart:`,
         });
       }
@@ -125,10 +122,9 @@ const giveRoute = post('/give', async (req, res) => {
   let fromName = data.user_name;
   let fromId = data.user_id;
 
-  let reg = data.text.match(
-    /<@([A-Z0-9]*)\|([a-zA-Z0-9]*)>\s?([0-9]*)?\s?(.*)?/,
-  );
+  let reg = data.text.match(/<@([A-Z0-9]*)\|([\S]*)>\s?(-?[0-9]*)?\s?(.*)?/);
   if (!reg) {
+    console.warn(`[/give] invalid request: ${data.text}`);
     // same as slack.chat.postEphemeral();
     return send(
       res,
@@ -174,7 +170,7 @@ const giveRoute = post('/give', async (req, res) => {
     attachments: [
       {
         text: giveMessage || '',
-        callback_id: 'reaction',
+        callback_id: fromId,
         actions: [
           {
             name: 'reaction',
@@ -202,6 +198,8 @@ const giveRoute = post('/give', async (req, res) => {
   updateUserAvailablePoints(fromId, -giveCount);
   updateUserScore(toId, giveCount);
 
+  console.log(`[/give] ${fromName} => ${toName}`);
+
   send(res, 200, {
     text: `You gave ${giveCount} lovebrick${
       giveCount > 1 ? 's' : ''
@@ -218,6 +216,7 @@ const countRoute = post('/lovebrick', async (req, res) => {
   const data = await parse(req);
   let fromId = data.user_id;
   let user = await getUser(fromId);
+  console.log(`[/count] ${user.name}`);
 
   send(res, 200, `You have ${user.data().score} lovebricks`);
 });
@@ -245,8 +244,12 @@ const reactRoute = post('/react', async (req, res) => {
   const body = JSON.parse(data.payload);
   const reaction = body.actions[0].value;
 
+  const originalAuthor = body.original_message.text.match(/@(\S*)/)[1];
+
+  console.log(`[/react] ${body.user.name} => ${originalAuthor}`);
+
   slack.chat.postMessage({
-    channel: body.channel.id,
+    channel: body.callback_id,
     text: `@${body.user.name} reacted with ${reaction}`,
     attachments: [
       {
@@ -258,6 +261,12 @@ const reactRoute = post('/react', async (req, res) => {
 
   send(res, 200, {
     text: `You reacted with ${reaction}`,
+    attachments: [
+      {
+        author_name: `${body.original_message.text}`,
+        text: body.original_message.attachments[0].text,
+      },
+    ],
     replace_original: true,
   });
 });
