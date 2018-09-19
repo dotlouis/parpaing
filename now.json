@@ -1,8 +1,11 @@
 {
   "alias": "lovebrick",
-  "type": "docker",
-  "features": {
-    "cloud": "v2"
+  "type": "npm",
+  "scale": {
+    "bru1": {
+      "min": 1,
+      "max": "auto"
+    }
   },
   "env": {
     "SLACK_TOKEN": "@slack_token",
