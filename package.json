@@ -3,9 +3,6 @@
   "version": "1.0.0",
   "description": "Briq not strong enough? Try Parpaing",
   "main": "index",
-  "engines": {
-    "node": "8.x.x"
-  },
   "scripts": {
     "start": "node --experimental-modules --harmony-dynamic-import index",
     "dev": "node --experimental-modules --harmony-dynamic-import index",
